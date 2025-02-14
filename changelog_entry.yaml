@@ -1,0 +1,4 @@
+- bump: minor
+  changes:
+    added:
+      - added a new feature workerManager.py which uses redis queue and google cloud logging to house the workers and controls simulation run
