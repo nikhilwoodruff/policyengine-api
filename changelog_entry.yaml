@@ -1,0 +1,4 @@
+- bump: minor
+  changes:
+    added:
+      - Created tests to confirm that expiring environment variables are still valid
