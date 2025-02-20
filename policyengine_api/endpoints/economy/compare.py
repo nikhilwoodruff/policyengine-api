@@ -1,6 +1,9 @@
 from microdf import MicroDataFrame, MicroSeries
 import numpy as np
 import sys
+from policyengine_core.tools.hugging_face import download_huggingface_dataset
+import pandas as pd
+import h5py
 
 
 def budgetary_impact(baseline: dict, reform: dict) -> dict:
@@ -531,6 +534,70 @@ def poverty_racial_breakdown(baseline: dict, reform: dict) -> dict:
     )
 
 
+def uk_constituency_breakdown(
+    baseline: dict, reform: dict, country_id: str
+) -> dict:
+    if country_id != "uk":
+        return {}
+
+    output = {
+        "by_constituency": {},
+        "overall": {
+            "Gain more than 5%": 0,
+            "Gain less than 5%": 0,
+            "No change": 0,
+            "Lose less than 5%": 0,
+            "Lose more than 5%": 0,
+        },
+    }
+    baseline_hnet = baseline["household_net_income"]
+    reform_hnet = reform["household_net_income"]
+
+    constituency_weights_path = download_huggingface_dataset(
+        repo="policyengine/policyengine-uk-data",
+        repo_filename="parliamentary_constituency_weights.h5",
+    )
+    with h5py.File(constituency_weights_path, "r") as f:
+        weights = f["2025"][...]
+
+    constituency_names_path = download_huggingface_dataset(
+        repo="policyengine/policyengine-uk-data",
+        repo_filename="constituencies_2024.csv",
+    )
+    constituency_names = pd.read_csv(constituency_names_path)
+
+    for i in range(len(constituency_names)):
+        name = constituency_names.iloc[i]["name"]
+        weight = weights[i]
+        baseline_income = MicroSeries(baseline_hnet, weights=weight)
+        reform_income = MicroSeries(reform_hnet, weights=weight)
+        average_household_income_change = (
+            reform_income.sum() - baseline_income.sum()
+        ) / baseline_income.count()
+        percent_household_income_change = (
+            reform_income.sum() / baseline_income.sum() - 1
+        )
+        output["by_constituency"][name] = {
+            "average_household_income_change": average_household_income_change,
+            "relative_household_income_change": percent_household_income_change,
+            "x": int(constituency_names.iloc[i]["x"]),
+            "y": int(constituency_names.iloc[i]["y"]),
+        }
+
+        if percent_household_income_change > 0.05:
+            output["overall"]["Gain more than 5%"] += 1
+        elif percent_household_income_change > 1e-3:
+            output["overall"]["Gain less than 5%"] += 1
+        elif percent_household_income_change > -1e-3:
+            output["overall"]["No change"] += 1
+        elif percent_household_income_change > -0.05:
+            output["overall"]["Lose less than 5%"] += 1
+        else:
+            output["overall"]["Lose more than 5%"] += 1
+
+    return output
+
+
 def compare_economic_outputs(
     baseline: dict, reform: dict, country_id: str = None
 ) -> dict:
@@ -556,6 +623,9 @@ def compare_economic_outputs(
         poverty_by_race_data = poverty_racial_breakdown(baseline, reform)
         intra_decile_impact_data = intra_decile_impact(baseline, reform)
         labor_supply_response_data = labor_supply_response(baseline, reform)
+        constituency_impact_data = uk_constituency_breakdown(
+            baseline, reform, country_id
+        )
         try:
             wealth_decile_impact_data = wealth_decile_impact(baseline, reform)
             intra_wealth_decile_impact_data = intra_wealth_decile_impact(
@@ -577,6 +647,7 @@ def compare_economic_outputs(
             wealth_decile=wealth_decile_impact_data,
             intra_wealth_decile=intra_wealth_decile_impact_data,
             labor_supply_response=labor_supply_response_data,
+            constituency_impact=constituency_impact_data,
         )
     elif baseline.get("type") == "cliff":
         return dict(

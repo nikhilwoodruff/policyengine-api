@@ -16,6 +16,8 @@ from policyengine_core.model_api import Reform, Enum
 from policyengine_core.periods import instant
 import dpath
 import math
+from policyengine_core.tools.hugging_face import download_huggingface_dataset
+import pandas as pd
 
 # Note: The following policyengine_[xx] imports are probably redundant.
 # These modules are imported dynamically in the __init__ function below.
@@ -64,13 +66,25 @@ class PolicyEngineCountry:
         # { region: [{ name: "uk", label: "the UK" }], time_period: [{ name: 2022, label: "2022", ... }] }
         options = dict()
         if self.country_id == "uk":
+            constituency_names_path = download_huggingface_dataset(
+                repo="policyengine/policyengine-uk-data",
+                repo_filename="constituencies_2024.csv",
+            )
+            constituency_names = pd.read_csv(constituency_names_path)
             region = [
                 dict(name="uk", label="the UK"),
-                dict(name="eng", label="England"),
-                dict(name="scot", label="Scotland"),
+                dict(name="country/ENGLAND", label="England"),
+                dict(name="country/SCOTLAND", label="Scotland"),
                 dict(name="wales", label="Wales"),
                 dict(name="ni", label="Northern Ireland"),
             ]
+            for i in range(len(constituency_names)):
+                region.append(
+                    dict(
+                        name=f"constituency/{constituency_names.iloc[i]['name']}",
+                        label=constituency_names.iloc[i]["name"],
+                    )
+                )
             time_period = [
                 dict(name=2024, label="2024"),
                 dict(name=2025, label="2025"),

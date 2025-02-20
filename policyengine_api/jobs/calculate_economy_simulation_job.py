@@ -4,6 +4,8 @@ import traceback
 import datetime
 import time
 import os
+from typing import Type
+import pandas as pd
 
 from policyengine_api.jobs import BaseJob
 from policyengine_api.jobs.tasks import compute_general_economy
@@ -15,6 +17,8 @@ from policyengine_api.endpoints.economy.reform_impact import set_comment_on_job
 from policyengine_api.constants import COUNTRY_PACKAGE_VERSIONS
 from policyengine_api.country import COUNTRIES, create_policy_reform
 from policyengine_core.simulations import Microsimulation
+from policyengine_core.tools.hugging_face import download_huggingface_dataset
+import h5py
 
 from policyengine_us import Microsimulation
 from policyengine_uk import Microsimulation
@@ -250,26 +254,56 @@ class CalculateEconomySimulationJob(BaseJob):
     def _create_simulation_uk(
         self, country, reform, region, time_period
     ) -> Microsimulation:
-        Microsimulation: type = country.country_package.Microsimulation
+        CountryMicrosimulation: Type[Microsimulation] = (
+            country.country_package.Microsimulation
+        )
 
-        simulation = Microsimulation(
+        simulation = CountryMicrosimulation(
             reform=reform,
             dataset=ENHANCED_FRS,
         )
         simulation.default_calculation_period = time_period
         if region != "uk":
-            region_values = simulation.calculate("country").values
-            region_decoded = dict(
-                eng="ENGLAND",
-                wales="WALES",
-                scot="SCOTLAND",
-                ni="NORTHERN_IRELAND",
-            )[region]
-            df = simulation.to_input_dataframe()
-            simulation = Microsimulation(
-                dataset=df[region_values == region_decoded],
-                reform=reform,
-            )
+            if "constituency/" in region:
+                constituency = region.split("/")[1]
+                constituency_weights_path = download_huggingface_dataset(
+                    repo="policyengine/policyengine-uk-data",
+                    repo_filename="parliamentary_constituency_weights.h5",
+                )
+                constituency_names_path = download_huggingface_dataset(
+                    repo="policyengine/policyengine-uk-data",
+                    repo_filename="constituencies_2024.csv",
+                )
+                constituency_names = pd.read_csv(constituency_names_path)
+                if constituency in constituency_names.code.values:
+                    constituency_id = constituency_names[
+                        constituency_names.code == constituency
+                    ].index[0]
+                elif constituency in constituency_names.name.values:
+                    constituency_id = constituency_names[
+                        constituency_names.name == constituency
+                    ].index[0]
+                else:
+                    raise ValueError(
+                        f"Constituency {constituency} not found. See {constituency_names_path} for the list of available constituencies."
+                    )
+                simulation.calculate("household_net_income", 2025)
+                with h5py.File(constituency_weights_path, "r") as f:
+                    weights = f["2025"][...]
+
+                weights = weights[constituency_id]
+
+                simulation.set_input("household_weight", 2025, weights)
+                simulation.get_holder("person_weight").delete_arrays()
+                simulation.get_holder("benunit_weight").delete_arrays()
+            elif "country/" in region:
+                couuntry_region = region.split("/")[1]
+                region_values = simulation.calculate("country").values
+                df = simulation.to_input_dataframe()
+                simulation = Microsimulation(
+                    dataset=df[region_values == couuntry_region],
+                    reform=reform,
+                )
 
         return simulation
 
